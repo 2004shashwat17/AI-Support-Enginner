@@ -1,0 +1,36 @@
+{
+  "version": "1.0",
+  "namespace": "evaluation-baseline-v1",
+  "chunk_size": 500,
+  "chunk_overlap": 0,
+  "documents": [
+    {
+      "document_id": "9bf25f95-1316-5324-8ce8-b21abb6a4b60",
+      "filename": "password-guide.txt",
+      "title": "Password Reset",
+      "content": "Reset your password from Settings.",
+      "metadata": {"knowledge_category": "account_access"}
+    },
+    {
+      "document_id": "ae0dabd1-ab28-5273-a48a-aa8919147356",
+      "filename": "recovery-guide.txt",
+      "title": "Account Recovery",
+      "content": "Use email recovery.",
+      "metadata": {"knowledge_category": "account_access"}
+    },
+    {
+      "document_id": "a4d2ee51-2f9c-5f5c-93ff-a48d814cd1f7",
+      "filename": "policy.txt",
+      "title": "Refund Period",
+      "content": "Refunds within 30 days",
+      "metadata": {"knowledge_category": "refunds"}
+    },
+    {
+      "document_id": "741fd888-d438-5284-af5b-e0e8e11c56e4",
+      "filename": "faq.txt",
+      "title": "Shipping",
+      "content": "Shipping details",
+      "metadata": {"knowledge_category": "shipping"}
+    }
+  ]
+}

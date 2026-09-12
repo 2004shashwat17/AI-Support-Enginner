@@ -1,0 +1,139 @@
+{
+  "version": "1.0",
+  "description": "Synthetic baseline derived only from support facts already present in project tests.",
+  "cases": [
+    {
+      "case_id": "password-reset-settings",
+      "category": "direct_factual",
+      "question": "How can I reset my password?",
+      "answerability": "answerable",
+      "expected_answer": "Reset the password from Settings.",
+      "expected_key_facts": ["Settings"],
+      "relevant_sources": [{
+        "chunk_id": "fdb00a4e-a795-51f4-9876-85923c0f7405",
+        "document_id": "9bf25f95-1316-5324-8ce8-b21abb6a4b60",
+        "source_filename": "password-guide.txt",
+        "chunk_index": 0
+      }],
+      "notes": "Fact originates from tests/test_rag.py."
+    },
+    {
+      "case_id": "email-recovery",
+      "category": "direct_factual",
+      "question": "What recovery method is available?",
+      "answerability": "answerable",
+      "expected_answer": "Use email recovery.",
+      "expected_key_facts": ["email recovery"],
+      "relevant_sources": [{
+        "chunk_id": "2ab6d70e-1b4d-5c3d-b64b-ac0db8c60e65",
+        "document_id": "ae0dabd1-ab28-5273-a48a-aa8919147356",
+        "source_filename": "recovery-guide.txt",
+        "chunk_index": 0
+      }],
+      "notes": "Fact originates from tests/test_rag.py."
+    },
+    {
+      "case_id": "password-reset-and-recovery",
+      "category": "multiple_facts",
+      "question": "Where do I reset my password, and what recovery method can I use?",
+      "answerability": "answerable",
+      "expected_answer": "Reset it from Settings and use email recovery.",
+      "expected_key_facts": ["Settings", "email recovery"],
+      "relevant_sources": [
+        {
+          "chunk_id": "fdb00a4e-a795-51f4-9876-85923c0f7405",
+          "document_id": "9bf25f95-1316-5324-8ce8-b21abb6a4b60",
+          "source_filename": "password-guide.txt",
+          "chunk_index": 0
+        },
+        {
+          "chunk_id": "2ab6d70e-1b4d-5c3d-b64b-ac0db8c60e65",
+          "document_id": "ae0dabd1-ab28-5273-a48a-aa8919147356",
+          "source_filename": "recovery-guide.txt",
+          "chunk_index": 0
+        }
+      ],
+      "notes": "Combines the two support facts in tests/test_rag.py."
+    },
+    {
+      "case_id": "refund-window",
+      "category": "direct_factual",
+      "question": "What refund period is stated?",
+      "answerability": "answerable",
+      "expected_answer": "Refunds are within 30 days.",
+      "expected_key_facts": ["within 30 days"],
+      "relevant_sources": [{
+        "chunk_id": "33aa05cf-4958-537d-ab0d-0bb060314cf5",
+        "document_id": "a4d2ee51-2f9c-5f5c-93ff-a48d814cd1f7",
+        "source_filename": "policy.txt",
+        "chunk_index": 0
+      }],
+      "notes": "Fact originates from tests/test_document_ingestion.py."
+    },
+    {
+      "case_id": "shipping-document-topic",
+      "category": "direct_factual",
+      "question": "What topic is contained in the shipping document?",
+      "answerability": "answerable",
+      "expected_answer": "Shipping details.",
+      "expected_key_facts": ["Shipping details"],
+      "relevant_sources": [{
+        "chunk_id": "1ee6547c-0ffb-5ad4-9809-d437c35af7ac",
+        "document_id": "741fd888-d438-5284-af5b-e0e8e11c56e4",
+        "source_filename": "faq.txt",
+        "chunk_index": 0
+      }],
+      "notes": "Exact text originates from tests/test_document_ingestion.py."
+    },
+    {
+      "case_id": "change-email-settings",
+      "category": "similar_but_wrong",
+      "question": "Can I change my email address from Settings?",
+      "answerability": "unanswerable",
+      "expected_answer": "The knowledge base does not contain enough information to answer this question.",
+      "expected_key_facts": [],
+      "relevant_sources": [],
+      "notes": "The existing Settings fact concerns password reset, not email changes."
+    },
+    {
+      "case_id": "ambiguous-recovery",
+      "category": "ambiguous",
+      "question": "How do I recover it?",
+      "answerability": "unanswerable",
+      "expected_answer": "The knowledge base does not contain enough information to answer this question.",
+      "expected_key_facts": [],
+      "relevant_sources": [],
+      "notes": "The object to recover is unspecified."
+    },
+    {
+      "case_id": "refund-exceptions",
+      "category": "hallucination_risk",
+      "question": "Which products are excluded from the refund policy?",
+      "answerability": "unanswerable",
+      "expected_answer": "The knowledge base does not contain enough information to answer this question.",
+      "expected_key_facts": [],
+      "relevant_sources": [],
+      "notes": "The existing fixture states only a 30-day period."
+    },
+    {
+      "case_id": "shipping-arrival-time",
+      "category": "hallucination_risk",
+      "question": "Exactly when will my order arrive?",
+      "answerability": "unanswerable",
+      "expected_answer": "The knowledge base does not contain enough information to answer this question.",
+      "expected_key_facts": [],
+      "relevant_sources": [],
+      "notes": "No delivery estimate exists in project knowledge fixtures."
+    },
+    {
+      "case_id": "support-phone-number",
+      "category": "not_in_knowledge_base",
+      "question": "What is the customer support phone number?",
+      "answerability": "unanswerable",
+      "expected_answer": "The knowledge base does not contain enough information to answer this question.",
+      "expected_key_facts": [],
+      "relevant_sources": [],
+      "notes": "No phone number exists in project knowledge fixtures."
+    }
+  ]
+}
