@@ -8,6 +8,11 @@ from app.models.rag import (
     RAGResponse,
     RetrievedChunkResponse,
 )
+from app.services.guardrails import (
+    EvidenceGuardrail,
+    EvidenceStatus,
+    assess_generation_grounding,
+)
 from app.services.llm import LLMError, LLMProvider
 
 
@@ -65,9 +70,12 @@ class RAGService:
         self,
         retrieval_service: KnowledgeRetriever,
         llm_provider: LLMProvider,
+        *,
+        guardrail: EvidenceGuardrail | None = None,
     ) -> None:
         self._retrieval_service = retrieval_service
         self._llm_provider = llm_provider
+        self._guardrail = guardrail or EvidenceGuardrail()
 
     async def answer(
         self,
@@ -89,11 +97,14 @@ class RAGService:
             raise RAGRetrievalError("Knowledge retrieval failed.") from exc
 
         chunk_responses = [_to_chunk_response(chunk) for chunk in retrieved_chunks]
-        if not retrieved_chunks:
+
+        evidence_assessment = self._guardrail.assess(retrieved_chunks)
+        if evidence_assessment.status is not EvidenceStatus.SUFFICIENT_EVIDENCE:
             return RAGResponse(
                 answer=INSUFFICIENT_KNOWLEDGE_ANSWER,
                 citations=[],
-                retrieved_chunks=[],
+                retrieved_chunks=chunk_responses,
+                evidence_status=evidence_assessment.status,
             )
 
         context = build_context(retrieved_chunks)
@@ -124,10 +135,21 @@ class RAGService:
             _to_citation(source_map[source_id])
             for source_id in dict.fromkeys(generated.cited_source_ids)
         ]
+
+        grounding_assessment = assess_generation_grounding(len(citations))
+        if grounding_assessment.status is not EvidenceStatus.SUFFICIENT_EVIDENCE:
+            return RAGResponse(
+                answer=INSUFFICIENT_KNOWLEDGE_ANSWER,
+                citations=[],
+                retrieved_chunks=chunk_responses,
+                evidence_status=grounding_assessment.status,
+            )
+
         return RAGResponse(
             answer=generated.answer,
             citations=citations,
             retrieved_chunks=chunk_responses,
+            evidence_status=EvidenceStatus.SUFFICIENT_EVIDENCE,
         )
 
 
@@ -157,4 +179,6 @@ def _to_chunk_response(chunk: RetrievedChunk) -> RetrievedChunkResponse:
         embedding_model=chunk.embedding_model,
         cosine_distance=chunk.cosine_distance,
         cosine_similarity=chunk.cosine_similarity,
+        rerank_score=chunk.rerank_score,
+        original_rank=chunk.original_rank,
     )

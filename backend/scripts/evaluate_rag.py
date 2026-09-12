@@ -8,7 +8,7 @@ from sqlalchemy import text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
-from app.core.config import DatabaseSettings, RetrievalStrategy, Settings
+from app.core.config import DatabaseSettings, Settings
 from app.db.repositories.keyword_retrieval import KeywordRetrievalRepository
 from app.db.repositories.retrieval import RetrievalRepository
 from app.db.session import create_database_engine
@@ -17,6 +17,7 @@ from app.services.hybrid_retrieval import HybridRetriever
 from app.services.keyword_retrieval import KeywordRetriever
 from app.services.llm import OpenAILLMProvider
 from app.services.rag import RAGService
+from app.services.reranking import LexicalOverlapRerankProvider, Reranker, RerankingRetriever
 from app.services.retrieval import RetrievalService, Retriever
 from evaluation.dataset import EvaluationDatasetError, load_evaluation_dataset
 from evaluation.reporting import print_comparison_report
@@ -43,7 +44,7 @@ def parse_args() -> argparse.Namespace:
     )
     parser.add_argument(
         "--generation-strategy",
-        choices=("vector", "keyword", "hybrid"),
+        choices=("vector", "keyword", "hybrid", "hybrid_reranked"),
         default="vector",
         help="Retrieval strategy used when --run-generation is enabled.",
     )
@@ -120,10 +121,16 @@ async def main() -> int:
                     candidate_top_k=settings.hybrid_candidate_top_k,
                 ),
             }
+            retrievers["hybrid_reranked"] = RerankingRetriever(
+                retrievers["hybrid"],
+                Reranker(LexicalOverlapRerankProvider()),
+                candidate_top_k=settings.rerank_candidate_top_k,
+                default_top_k=settings.rerank_top_k,
+            )
             comparison = await run_retrieval_comparison(dataset, retrievers)
             generation_report = None
             if args.run_generation:
-                generation_strategy: RetrievalStrategy = args.generation_strategy
+                generation_strategy: str = args.generation_strategy
                 rag_service = RAGService(
                     retrievers[generation_strategy],
                     OpenAILLMProvider(

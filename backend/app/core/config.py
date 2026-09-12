@@ -1,7 +1,7 @@
 from functools import lru_cache
 from typing import Literal
 
-from pydantic import Field, SecretStr
+from pydantic import Field, SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -27,9 +27,20 @@ class Settings(BaseSettings):
     retrieval_strategy: RetrievalStrategy = "vector"
     hybrid_candidate_top_k: int = Field(default=20, gt=0, le=100)
     rrf_constant: int = Field(default=60, gt=0)
+    reranking_enabled: bool = False
+    rerank_candidate_top_k: int = Field(default=20, gt=0, le=100)
+    rerank_top_k: int = Field(default=5, gt=0, le=100)
     llm_provider: str = Field(default="openai", pattern="^openai$")
     llm_model: str = Field(default="gpt-4.1-mini", min_length=1)
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+
+    @model_validator(mode="after")
+    def _validate_rerank_top_k(self) -> "Settings":
+        if self.rerank_candidate_top_k < self.rerank_top_k:
+            raise ValueError(
+                "rerank_candidate_top_k must be greater than or equal to rerank_top_k."
+            )
+        return self
 
 
 class DatabaseSettings(BaseSettings):

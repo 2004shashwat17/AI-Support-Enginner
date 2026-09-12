@@ -15,6 +15,7 @@ from app.services.hybrid_retrieval import HybridRetriever
 from app.services.keyword_retrieval import KeywordRetriever
 from app.services.llm import OpenAILLMProvider
 from app.services.rag import RAGService
+from app.services.reranking import LexicalOverlapRerankProvider, Reranker, RerankingRetriever
 from app.services.retrieval import RetrievalService, Retriever
 
 
@@ -72,7 +73,15 @@ async def get_rag_service(
         model=settings.llm_model,
         temperature=settings.llm_temperature,
     )
+    active_retriever: Retriever = retrievers[settings.retrieval_strategy]
+    if settings.reranking_enabled:
+        active_retriever = RerankingRetriever(
+            active_retriever,
+            Reranker(LexicalOverlapRerankProvider()),
+            candidate_top_k=settings.rerank_candidate_top_k,
+            default_top_k=settings.rerank_top_k,
+        )
     try:
-        yield RAGService(retrievers[settings.retrieval_strategy], llm_provider)
+        yield RAGService(active_retriever, llm_provider)
     finally:
         await client.close()

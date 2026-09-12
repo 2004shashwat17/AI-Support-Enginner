@@ -37,6 +37,8 @@ class RetrievedChunk:
     dense_rank: int | None = None
     keyword_rank: int | None = None
     rrf_score: float | None = None
+    rerank_score: float | None = None
+    original_rank: int | None = None
 
 
 class RetrievalRepository:

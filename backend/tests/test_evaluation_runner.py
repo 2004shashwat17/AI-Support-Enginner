@@ -3,6 +3,7 @@ from uuid import UUID
 
 from app.db.repositories.retrieval import RetrievedChunk
 from app.models.rag import Citation, RAGResponse, RetrievedChunkResponse
+from app.services.reranking import LexicalOverlapRerankProvider, Reranker, RerankingRetriever
 from evaluation.models import EvaluationDataset
 from evaluation.runner import run_evaluation, run_retrieval_comparison
 
@@ -166,3 +167,73 @@ def test_runner_reports_vector_keyword_and_hybrid_metrics_separately() -> None:
     assert report.strategies["vector"][0].hit_rate_at_k == 0.0
     assert report.strategies["keyword"][0].hit_rate_at_k == 1.0
     assert report.strategies["hybrid"][0].hit_rate_at_k == 1.0
+
+
+def test_runner_compares_hybrid_against_hybrid_with_reranking() -> None:
+    dataset = EvaluationDataset.model_validate(
+        {
+            "version": "test",
+            "description": "Reranking comparison",
+            "cases": [
+                {
+                    "case_id": "reset",
+                    "category": "direct_factual",
+                    "question": "How do I reset my password?",
+                    "answerability": "answerable",
+                    "expected_answer": "Reset it from Settings.",
+                    "expected_key_facts": ["Settings"],
+                    "relevant_sources": [
+                        {"source_filename": "guide.txt", "chunk_index": 0}
+                    ],
+                }
+            ],
+        }
+    )
+    relevant = RetrievedChunk(
+        chunk_id=UUID(int=1),
+        document_id=UUID(int=100),
+        chunk_index=0,
+        content="Reset it from Settings.",
+        metadata={"source_filename": "guide.txt"},
+        embedding_model="test-model",
+    )
+    irrelevant = RetrievedChunk(
+        chunk_id=UUID(int=2),
+        document_id=UUID(int=100),
+        chunk_index=1,
+        content="Unrelated shipping details.",
+        metadata={"source_filename": "other.txt"},
+        embedding_model="test-model",
+    )
+
+    class OrderedRetriever:
+        async def search(
+            self,
+            query: str,
+            *,
+            top_k: int | None = None,
+            document_id: UUID | None = None,
+            embedding_model: str | None = None,
+        ) -> list[RetrievedChunk]:
+            return [irrelevant, relevant][:top_k]
+
+    hybrid = OrderedRetriever()
+    hybrid_reranked = RerankingRetriever(
+        hybrid,
+        Reranker(LexicalOverlapRerankProvider()),
+        candidate_top_k=2,
+        default_top_k=1,
+    )
+
+    report = asyncio.run(
+        run_retrieval_comparison(
+            dataset,
+            {"hybrid": hybrid, "hybrid_reranked": hybrid_reranked},
+            k_values=(1,),
+        )
+    )
+
+    # Baseline hybrid puts the irrelevant chunk first, so Top-1 misses.
+    assert report.strategies["hybrid"][0].hit_rate_at_k == 0.0
+    # Reranking should move the lexically matching chunk to the top.
+    assert report.strategies["hybrid_reranked"][0].hit_rate_at_k == 1.0
