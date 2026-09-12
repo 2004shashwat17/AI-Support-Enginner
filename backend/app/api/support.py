@@ -4,7 +4,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
 
-from app.api.dependencies import get_rag_service
+from app.api.dependencies import enforce_rate_limit, get_rag_service
 from app.models.rag import RAGResponse
 from app.services.rag import (
     InvalidRAGQuestionError,
@@ -24,7 +24,7 @@ class SupportQuestionRequest(BaseModel):
 router = APIRouter(prefix="/api/v1/support", tags=["support"])
 
 
-@router.post("/ask", response_model=RAGResponse)
+@router.post("/ask", response_model=RAGResponse, dependencies=[Depends(enforce_rate_limit)])
 async def ask_support(
     request: SupportQuestionRequest,
     rag_service: Annotated[RAGService, Depends(get_rag_service)],

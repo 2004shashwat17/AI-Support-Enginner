@@ -30,9 +30,14 @@ class Settings(BaseSettings):
     reranking_enabled: bool = False
     rerank_candidate_top_k: int = Field(default=20, gt=0, le=100)
     rerank_top_k: int = Field(default=5, gt=0, le=100)
+    rate_limit_enabled: bool = True
+    rate_limit_requests: int = Field(default=30, gt=0)
+    rate_limit_window_seconds: float = Field(default=60.0, gt=0)
     llm_provider: str = Field(default="openai", pattern="^openai$")
     llm_model: str = Field(default="gpt-4.1-mini", min_length=1)
     llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
+    llm_prompt_price_per_1k: float | None = Field(default=None, ge=0.0)
+    llm_completion_price_per_1k: float | None = Field(default=None, ge=0.0)
 
     @model_validator(mode="after")
     def _validate_rerank_top_k(self) -> "Settings":

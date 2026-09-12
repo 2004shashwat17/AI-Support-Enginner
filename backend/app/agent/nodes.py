@@ -6,11 +6,15 @@ than duplicating retrieval, reranking, guardrail, or tool logic inline.
 
 from app.agent.router import classify_intent, extract_order_id
 from app.agent.state import AgentState
+from app.escalation.models import CreateEscalationRequest, EscalationReason
+from app.escalation.service import EscalationService
+from app.services.guardrails import EvidenceStatus
 from app.services.rag import RAGError, RAGService
 from app.tools.errors import (
     CustomerNotFoundError,
     OrderNotFoundError,
     SupportToolError,
+    ToolRepositoryError,
     UnauthorizedToolAccessError,
 )
 from app.tools.models import (
@@ -40,25 +44,84 @@ def safe_tool_error_message(exc: SupportToolError) -> str:
     return "The support tool is temporarily unavailable. Please try again shortly."
 
 
+def _escalate(
+    escalation_service: EscalationService,
+    state: AgentState,
+    *,
+    reason: EscalationReason,
+    summary: str,
+    citations: list | None = None,
+) -> tuple[str, str]:
+    """Creates an escalation record and returns (reason_value, escalation_id).
+
+    Creating this record never means a human reviewed anything -- it only
+    queues the request as `pending` (see docs/escalation.md).
+    """
+    record = escalation_service.create_escalation(
+        CreateEscalationRequest(
+            conversation_id=state.get("conversation_id"),
+            customer_id=state.get("customer_id"),
+            reason=reason,
+            summary=summary[:2000],
+            relevant_citations=citations or [],
+        )
+    )
+    return record.reason.value, record.escalation_id
+
+
+def _escalate_for_tool_failure(
+    escalation_service: EscalationService, state: AgentState, exc: SupportToolError
+) -> AgentState:
+    reason_value, escalation_id = _escalate(
+        escalation_service,
+        state,
+        reason=EscalationReason.TOOL_FAILURE,
+        summary=f"Tool failure while handling: {state['question']}",
+    )
+    return {
+        **state,
+        "final_answer": safe_tool_error_message(exc),
+        "tool_error": str(exc),
+        "escalated": True,
+        "escalation_reason": reason_value,
+        "escalation_id": escalation_id,
+    }
+
+
 async def understand_request(state: AgentState) -> AgentState:
-    order_id = extract_order_id(state["question"])
+    order_id = extract_order_id(state["question"]) or state.get("pending_order_id")
     return {**state, "order_id": order_id}
 
 
 async def route_request(state: AgentState) -> AgentState:
     intent = classify_intent(state["question"])
+
+    # Resuming a prior clarification: if this turn's text has no stronger
+    # keyword match (classify_intent fell back to "knowledge") but an order
+    # id was found and the conversation was waiting on one, continue the
+    # previously pending route instead of misrouting to "knowledge".
+    if (
+        intent == "knowledge"
+        and state.get("pending_slot") == "order_id"
+        and state.get("pending_route") in ("order", "refund")
+        and state.get("order_id")
+    ):
+        intent = state["pending_route"]  # type: ignore[assignment]
+
     if intent in ("order", "refund") and not state.get("order_id"):
         return {
             **state,
             "route": "clarification",
+            "pending_route": intent,
+            "pending_slot": "order_id",
             "clarification_prompt": (
                 "Please share your order ID (e.g. ORD-1234) so I can look this up."
             ),
         }
-    return {**state, "route": intent}
+    return {**state, "route": intent, "pending_route": None, "pending_slot": None}
 
 
-def make_knowledge_node(rag_service: RAGService):
+def make_knowledge_node(rag_service: RAGService, escalation_service: EscalationService):
     async def knowledge_node(state: AgentState) -> AgentState:
         try:
             response = await rag_service.answer(state["question"])
@@ -69,6 +132,26 @@ def make_knowledge_node(rag_service: RAGService):
                 "final_citations": [],
                 "evidence_status": "generation_failed",
             }
+
+        if str(response.evidence_status) == str(EvidenceStatus.INSUFFICIENT_EVIDENCE):
+            reason_value, escalation_id = _escalate(
+                escalation_service,
+                state,
+                reason=EscalationReason.INSUFFICIENT_KNOWLEDGE,
+                summary=state["question"],
+                citations=response.citations,
+            )
+            return {
+                **state,
+                "rag_response": response,
+                "final_answer": response.answer,
+                "final_citations": response.citations,
+                "evidence_status": str(response.evidence_status),
+                "escalated": True,
+                "escalation_reason": reason_value,
+                "escalation_id": escalation_id,
+            }
+
         return {
             **state,
             "rag_response": response,
@@ -80,13 +163,15 @@ def make_knowledge_node(rag_service: RAGService):
     return knowledge_node
 
 
-def make_customer_node(tool_service: SupportToolService):
+def make_customer_node(tool_service: SupportToolService, escalation_service: EscalationService):
     async def customer_node(state: AgentState) -> AgentState:
         customer_id = state.get("customer_id")
         if not customer_id:
             return {
                 **state,
                 "needs_clarification": True,
+                "pending_route": "customer",
+                "pending_slot": "customer_id",
                 "final_answer": "Please provide your customer ID.",
             }
         auth = AuthContext(customer_id=customer_id)
@@ -94,6 +179,8 @@ def make_customer_node(tool_service: SupportToolService):
             customer = tool_service.get_customer(
                 CustomerLookupRequest(customer_id=customer_id), auth
             )
+        except ToolRepositoryError as exc:
+            return _escalate_for_tool_failure(escalation_service, state, exc)
         except SupportToolError as exc:
             return {
                 **state,
@@ -108,7 +195,7 @@ def make_customer_node(tool_service: SupportToolService):
     return customer_node
 
 
-def make_order_node(tool_service: SupportToolService):
+def make_order_node(tool_service: SupportToolService, escalation_service: EscalationService):
     async def order_node(state: AgentState) -> AgentState:
         order_id = state.get("order_id")
         customer_id = state.get("customer_id")
@@ -122,6 +209,9 @@ def make_order_node(tool_service: SupportToolService):
             return {
                 **state,
                 "needs_clarification": True,
+                "pending_route": "order",
+                "pending_slot": "customer_id",
+                "pending_order_id": order_id,
                 "final_answer": "Please provide your customer ID to look up this order.",
             }
         auth = AuthContext(customer_id=customer_id)
@@ -129,6 +219,8 @@ def make_order_node(tool_service: SupportToolService):
             result = tool_service.get_order_status(
                 OrderLookupRequest(order_id=order_id), auth
             )
+        except ToolRepositoryError as exc:
+            return _escalate_for_tool_failure(escalation_service, state, exc)
         except SupportToolError as exc:
             return {
                 **state,
@@ -143,7 +235,7 @@ def make_order_node(tool_service: SupportToolService):
     return order_node
 
 
-def make_refund_node(tool_service: SupportToolService):
+def make_refund_node(tool_service: SupportToolService, escalation_service: EscalationService):
     async def refund_node(state: AgentState) -> AgentState:
         order_id = state.get("order_id")
         customer_id = state.get("customer_id")
@@ -157,6 +249,9 @@ def make_refund_node(tool_service: SupportToolService):
             return {
                 **state,
                 "needs_clarification": True,
+                "pending_route": "refund",
+                "pending_slot": "customer_id",
+                "pending_order_id": order_id,
                 "final_answer": "Please provide your customer ID to check refund status.",
             }
         auth = AuthContext(customer_id=customer_id)
@@ -164,6 +259,8 @@ def make_refund_node(tool_service: SupportToolService):
             result = tool_service.get_refund_status(
                 OrderLookupRequest(order_id=order_id), auth
             )
+        except ToolRepositoryError as exc:
+            return _escalate_for_tool_failure(escalation_service, state, exc)
         except SupportToolError as exc:
             return {
                 **state,
@@ -180,13 +277,15 @@ def make_refund_node(tool_service: SupportToolService):
     return refund_node
 
 
-def make_ticket_node(tool_service: SupportToolService):
+def make_ticket_node(tool_service: SupportToolService, escalation_service: EscalationService):
     async def ticket_node(state: AgentState) -> AgentState:
         customer_id = state.get("customer_id")
         if not customer_id:
             return {
                 **state,
                 "needs_clarification": True,
+                "pending_route": "ticket",
+                "pending_slot": "customer_id",
                 "final_answer": "Please provide your customer ID to file a support ticket.",
             }
         auth = AuthContext(customer_id=customer_id)
@@ -197,6 +296,8 @@ def make_ticket_node(tool_service: SupportToolService):
         )
         try:
             ticket = tool_service.create_support_ticket(request, auth)
+        except ToolRepositoryError as exc:
+            return _escalate_for_tool_failure(escalation_service, state, exc)
         except SupportToolError as exc:
             return {
                 **state,
@@ -222,13 +323,26 @@ async def clarification_node(state: AgentState) -> AgentState:
     }
 
 
-async def escalation_node(state: AgentState) -> AgentState:
-    return {
-        **state,
-        "escalated": True,
-        "escalation_reason": "The user explicitly requested a human agent.",
-        "final_answer": "This request has been escalated to a human support agent.",
-    }
+def make_escalation_node(escalation_service: EscalationService):
+    async def escalation_node(state: AgentState) -> AgentState:
+        reason_value, escalation_id = _escalate(
+            escalation_service,
+            state,
+            reason=EscalationReason.USER_REQUESTED_HUMAN,
+            summary=state["question"],
+        )
+        return {
+            **state,
+            "escalated": True,
+            "escalation_reason": reason_value,
+            "escalation_id": escalation_id,
+            "final_answer": (
+                "This request has been escalated to a human support agent. "
+                f"Reference: {escalation_id} (status: pending)."
+            ),
+        }
+
+    return escalation_node
 
 
 async def validate_result(state: AgentState) -> AgentState:

@@ -24,6 +24,13 @@ class InvalidDocumentError(DocumentIngestionError):
     """Raised when a document cannot be safely processed."""
 
 
+class DocumentTooLargeError(DocumentIngestionError):
+    """Raised when a document exceeds the maximum accepted size."""
+
+
+MAX_DOCUMENT_SIZE_BYTES = 5 * 1024 * 1024  # 5 MiB
+
+
 class IngestedDocument(BaseModel):
     document_id: UUID = Field(default_factory=uuid4)
     filename: str = Field(min_length=1)
@@ -33,6 +40,11 @@ class IngestedDocument(BaseModel):
 
 def ingest_text_document(filename: str | None, raw_content: bytes) -> IngestedDocument:
     safe_filename = _validate_filename(filename)
+
+    if len(raw_content) > MAX_DOCUMENT_SIZE_BYTES:
+        raise DocumentTooLargeError(
+            f"Documents must not exceed {MAX_DOCUMENT_SIZE_BYTES} bytes."
+        )
 
     try:
         extracted_text = raw_content.decode("utf-8")

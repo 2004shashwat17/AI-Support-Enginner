@@ -6,6 +6,7 @@ from pydantic import BaseModel
 
 from app.services.document_ingestion import (
     DocumentIngestionError,
+    DocumentTooLargeError,
     IngestedDocument,
     MetadataValue,
     UnsupportedDocumentTypeError,
@@ -45,6 +46,11 @@ async def ingest_document(
     except UnsupportedDocumentTypeError as exc:
         raise HTTPException(
             status_code=status.HTTP_415_UNSUPPORTED_MEDIA_TYPE,
+            detail=str(exc),
+        ) from exc
+    except DocumentTooLargeError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE,
             detail=str(exc),
         ) from exc
     except DocumentIngestionError as exc:

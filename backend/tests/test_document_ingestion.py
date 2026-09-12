@@ -3,8 +3,10 @@ from uuid import UUID
 import pytest
 
 from app.services.document_ingestion import (
+    DocumentTooLargeError,
     EmptyDocumentError,
     InvalidDocumentError,
+    MAX_DOCUMENT_SIZE_BYTES,
     UnsupportedDocumentTypeError,
     ingest_text_document,
 )
@@ -43,3 +45,10 @@ def test_extracts_basic_metadata() -> None:
 def test_rejects_non_utf8_content() -> None:
     with pytest.raises(InvalidDocumentError, match="UTF-8"):
         ingest_text_document("invalid.txt", b"\xff")
+
+
+def test_rejects_documents_over_the_size_limit() -> None:
+    oversized_content = b"a" * (MAX_DOCUMENT_SIZE_BYTES + 1)
+
+    with pytest.raises(DocumentTooLargeError, match="must not exceed"):
+        ingest_text_document("large.txt", oversized_content)

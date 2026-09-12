@@ -25,8 +25,12 @@ class AgentState(TypedDict, total=False):
 
     question: str
     customer_id: str | None
+    conversation_id: str | None
     order_id: str | None
     route: RouteName
+    pending_route: str | None
+    pending_slot: str | None
+    pending_order_id: str | None
     rag_response: RAGResponse | None
     tool_error: str | None
     final_answer: str
@@ -34,6 +38,7 @@ class AgentState(TypedDict, total=False):
     evidence_status: str
     escalated: bool
     escalation_reason: str | None
+    escalation_id: str | None
     needs_clarification: bool
     clarification_prompt: str | None
 
@@ -47,4 +52,5 @@ class SupportAgentResponse(BaseModel):
     evidence_status: str = "sufficient_evidence"
     escalated: bool = False
     escalation_reason: str | None = None
+    escalation_id: str | None = None
     needs_clarification: bool = False

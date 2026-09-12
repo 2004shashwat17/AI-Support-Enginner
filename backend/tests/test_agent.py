@@ -2,6 +2,9 @@ import asyncio
 from uuid import UUID
 
 from app.agent.graph import SupportAgent
+from app.escalation.models import EscalationStatus
+from app.escalation.repository import InMemoryEscalationRepository
+from app.escalation.service import EscalationService
 from app.models.rag import Citation, RAGResponse
 from app.services.guardrails import EvidenceStatus
 from app.services.rag import INSUFFICIENT_KNOWLEDGE_ANSWER, MalformedRAGResponseError
@@ -188,3 +191,121 @@ def test_handle_rejects_blank_question() -> None:
         assert "empty" in str(exc)
     else:
         raise AssertionError("Expected ValueError for blank question")
+
+
+# Multi-turn conversation memory: the master-prompt example.
+#   USER: "What is my order status?"
+#   AI:   "Please provide your order ID."
+#   USER: "ORD-1234"
+def test_conversation_resumes_order_clarification_with_a_bare_order_id() -> None:
+    agent = make_agent()
+
+    async def run() -> tuple:
+        first = await agent.handle(
+            "What is my order status?", customer_id="cust-1001", conversation_id="conv-1"
+        )
+        second = await agent.handle("ORD-2001", customer_id="cust-1001", conversation_id="conv-1")
+        return first, second
+
+    first, second = asyncio.run(run())
+
+    assert first.route == "clarification"
+    assert first.needs_clarification is True
+    assert second.route == "order"
+    assert "shipped" in second.answer.lower()
+
+
+def test_separate_conversation_ids_do_not_share_pending_state() -> None:
+    agent = make_agent()
+
+    async def run() -> tuple:
+        await agent.handle(
+            "What is my order status?", customer_id="cust-1001", conversation_id="conv-a"
+        )
+        # A bare order id in an unrelated conversation should not resume conv-a's pending order intent.
+        unrelated = await agent.handle("ORD-2001", customer_id="cust-1001", conversation_id="conv-b")
+        return unrelated
+
+    unrelated = asyncio.run(run())
+
+    assert unrelated.route == "knowledge"
+
+
+# Escalation trigger: insufficient knowledge automatically queues a pending escalation.
+def test_insufficient_knowledge_automatically_creates_pending_escalation() -> None:
+    rag = FakeRAGService(
+        RAGResponse(
+            answer=INSUFFICIENT_KNOWLEDGE_ANSWER,
+            citations=[],
+            retrieved_chunks=[],
+            evidence_status=EvidenceStatus.INSUFFICIENT_EVIDENCE,
+        )
+    )
+    escalation_service = EscalationService(InMemoryEscalationRepository())
+    tools = SupportToolService(InMemorySupportRepository())
+    agent = SupportAgent(rag, tools, escalation_service=escalation_service)
+
+    response = asyncio.run(agent.handle("What's the meaning of life?"))
+
+    assert response.escalated is True
+    assert response.escalation_id is not None
+    record = escalation_service.get_escalation(response.escalation_id)
+    assert record.status is EscalationStatus.PENDING
+    assert record.human_reviewed is False
+
+
+# Escalation trigger: a tool repository failure prevents resolution -> escalate.
+def test_tool_repository_failure_creates_escalation() -> None:
+    class FailingRepository:
+        def get_customer(self, customer_id: str):
+            raise RuntimeError("database unavailable")
+
+        def get_order(self, order_id: str):
+            raise RuntimeError("database unavailable")
+
+        def get_refund_status(self, order_id: str):
+            raise RuntimeError("database unavailable")
+
+        def find_open_ticket(self, customer_id, subject, description):
+            raise RuntimeError("database unavailable")
+
+        def create_ticket(self, ticket):
+            raise RuntimeError("database unavailable")
+
+    escalation_service = EscalationService(InMemoryEscalationRepository())
+    tools = SupportToolService(FailingRepository())
+    rag = FakeRAGService(RAGResponse(answer="unused", citations=[], retrieved_chunks=[]))
+    agent = SupportAgent(rag, tools, escalation_service=escalation_service)
+
+    response = asyncio.run(
+        agent.handle("Show me my account details", customer_id="cust-1001")
+    )
+
+    assert response.escalated is True
+    assert response.escalation_id is not None
+    assert "runtimeerror" not in response.answer.lower()
+
+
+# Escalation trigger: repeated clarification failures.
+def test_repeated_clarification_failures_trigger_escalation() -> None:
+    escalation_service = EscalationService(InMemoryEscalationRepository())
+    tools = SupportToolService(InMemorySupportRepository())
+    rag = FakeRAGService(
+        RAGResponse(answer="unused", citations=[], retrieved_chunks=[])
+    )
+    agent = SupportAgent(rag, tools, escalation_service=escalation_service)
+
+    async def run():
+        responses = []
+        for _ in range(3):
+            responses.append(
+                await agent.handle("Show me my account details", conversation_id="conv-1")
+            )
+        return responses
+
+    responses = asyncio.run(run())
+
+    assert all(r.needs_clarification for r in responses[:2])
+    assert responses[-1].escalated is True
+    assert responses[-1].escalation_id is not None
+
